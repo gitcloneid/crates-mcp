@@ -186,6 +186,8 @@ impl CratesClient {
         &self,
         query: &str,
         limit: Option<usize>,
+        sort_by: &str,
+        min_downloads: u64,
     ) -> Result<Vec<CrateSearchResult>> {
         // Input validation
         if query.trim().is_empty() {
@@ -194,10 +196,23 @@ impl CratesClient {
 
         let limit = limit.unwrap_or(10).min(100);
 
-        let url = format!(
-            "https://crates.io/api/v1/crates?q={}&per_page={}",
-            urlencoding::encode(query),
+        // Add sort parameter to API query if sorting by downloads
+        let mut query_params = format!("q={}", urlencoding::encode(query));
+        if sort_by == "downloads" {
+            query_params.push_str("&sort=downloads");
+        }
+
+        // Get more results than requested for filtering, then apply our own filters
+        let api_limit = if min_downloads > 0 || sort_by == "downloads" {
+            limit * 3 // Get more results to allow for filtering
+        } else {
             limit
+        };
+
+        let url = format!(
+            "https://crates.io/api/v1/crates?{}&per_page={}",
+            query_params,
+            api_limit.min(100) // API limit is 100
         );
 
         let response = self.make_crates_io_request(&url).await?;
@@ -206,7 +221,7 @@ impl CratesClient {
             .await
             .context("Failed to parse search response")?;
 
-        let results: Vec<CrateSearchResult> = search_response
+        let mut results: Vec<CrateSearchResult> = search_response
             .crates
             .into_iter()
             .map(|c| CrateSearchResult {
@@ -215,9 +230,24 @@ impl CratesClient {
                 description: c.description,
                 downloads: c.downloads,
             })
+            .filter(|c| c.downloads >= min_downloads) // Filter by minimum downloads
             .collect();
 
-        info!("Found {} crates for query '{}'", results.len(), query);
+        // Apply additional sorting if needed (API sorting might not be sufficient)
+        if sort_by == "downloads" {
+            results.sort_by(|a, b| b.downloads.cmp(&a.downloads));
+        }
+
+        // Limit to requested number after filtering
+        results.truncate(limit);
+
+        info!(
+            "Found {} crates for query '{}' (sort: {}, min_downloads: {})",
+            results.len(),
+            query,
+            sort_by,
+            min_downloads
+        );
         Ok(results)
     }
 
@@ -395,11 +425,24 @@ mod tests {
     #[tokio::test]
     async fn test_search_crates() -> Result<()> {
         let client = CratesClient::new().await?;
-        let results = client.search_crates("serde", Some(5)).await?;
+        let results = client.search_crates("serde", Some(5), "relevance", 0).await?;
 
         assert!(!results.is_empty());
         assert!(results.len() <= 5);
         assert!(results.iter().any(|c| c.name.contains("serde")));
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_search_crates_by_downloads() -> Result<()> {
+        let client = CratesClient::new().await?;
+        let results = client.search_crates("http", Some(3), "downloads", 100000).await?;
+
+        assert!(!results.is_empty());
+        assert!(results.len() <= 3);
+        // All results should have at least 100k downloads
+        assert!(results.iter().all(|c| c.downloads >= 100000));
 
         Ok(())
     }

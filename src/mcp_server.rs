@@ -146,6 +146,17 @@ impl CratesIoMcpServer {
                                     "description": "Maximum number of results to return (default: 10, max: 100)",
                                     "minimum": 1,
                                     "maximum": 100
+                                },
+                                "sort_by": {
+                                    "type": "string",
+                                    "description": "Sort results by popularity (downloads) or relevance (default: relevance)",
+                                    "enum": ["relevance", "downloads"],
+                                    "default": "relevance"
+                                },
+                                "min_downloads": {
+                                    "type": "integer",
+                                    "description": "Filter crates with minimum number of downloads (default: 25000)",
+                                    "minimum": 25000
                                 }
                             },
                             "required": ["query"]
@@ -326,6 +337,16 @@ impl CratesIoMcpServer {
             .and_then(|v| v.as_u64())
             .map(|n| n as usize);
 
+        let sort_by = arguments
+            .get("sort_by")
+            .and_then(|v| v.as_str())
+            .unwrap_or("relevance");
+
+        let min_downloads = arguments
+            .get("min_downloads")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(25000);
+
         // Additional validation
         if let Some(limit) = limit {
             if limit > 100 {
@@ -333,7 +354,7 @@ impl CratesIoMcpServer {
             }
         }
 
-        let results = self.crates_client.search_crates(query, limit).await?;
+        let results = self.crates_client.search_crates(query, limit, sort_by, min_downloads).await?;
         serde_json::to_string_pretty(&results).context("Failed to serialize search results")
     }
 
