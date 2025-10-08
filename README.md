@@ -88,4 +88,4 @@ cargo clippy
 
 ## License
 
-Copyright (c) 2025 Pato Lankenau
+MIT Copyright (c) 2025 Pato Lankenau
